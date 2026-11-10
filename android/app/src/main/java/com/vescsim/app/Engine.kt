@@ -55,9 +55,11 @@ class Engine(preset: BatteryPreset = PRESETS[1]) {
     private var autoFault = 0
     private var tel = Telemetry()
 
-    private val rInt = 0.06
+    var rInt = 0.06
+    var regenA = 0.0
+    var initSoc = 1.0
     private val rPhase = 0.08
-    private val maxRegenA get() = preset.maxMotorA * 0.4
+    private val maxRegenA get() = if (regenA > 0) regenA else preset.maxMotorA * 0.4
     private val mass get() = preset.massKg
 
     init { reset() }
@@ -83,7 +85,7 @@ class Engine(preset: BatteryPreset = PRESETS[1]) {
     @Synchronized fun reset() {
         t = 0.0; v = 0.0; prevV = 0.0; throttle = 0.0; overrides.clear(); faultCode = 0; autoFault = 0
         tempMotor = 25.0; tempFet = 25.0; whUsed = 0.0; whRegen = 0.0; ahUsed = 0.0; ahRegen = 0.0
-        distanceM = 0.0; tach = 0.0; tachAbs = 0.0; soc = 1.0
+        distanceM = 0.0; tach = 0.0; tachAbs = 0.0; soc = initSoc
         link.up = true; link.dropRate = 0.0; link.crcCorruptRate = 0.0
         scenario = null
         tel = Telemetry().also { it.controllerId = controllerId }
@@ -218,8 +220,19 @@ class Engine(preset: BatteryPreset = PRESETS[1]) {
         x.fault = if (faultCode != 0) faultCode else autoFault
         x.distanceKm = distKm; x.odometerM = distanceM; x.tachometer = tach.toLong(); x.tachometerAbs = tachAbs.toLong()
         x.uptimeMs = (t * 1000).toLong(); x.controllerId = controllerId
+        // forçages directs de grandeurs de sortie (tout est modifiable depuis l'app)
+        ov["i_motor"]?.let { x.iMotor = it; x.torqueNm = it * p.kt }
+        ov["duty"]?.let { x.duty = it }
+        ov["power_w"]?.let { x.powerW = it }
+        ov["wh_per_km"]?.let { x.whPerKm = it }
+        ov["distance_km"]?.let { x.distanceKm = it; x.odometerM = it * 1000.0 }
+        ov["wh_used"]?.let { x.whUsed = it }
+        ov["wh_regen"]?.let { x.whRegen = it }
+        ov["soc_pct"]?.let { x.socPct = it; x.whLeft = it / 100.0 * p.ah * p.nominal }
         return x
     }
 
     @Synchronized fun snapshot(): Telemetry = tel.copy()
+    @Synchronized fun forced(key: String): Boolean = overrides.containsKey(key)
+    @Synchronized fun forcedValue(key: String): Double? = overrides[key]
 }

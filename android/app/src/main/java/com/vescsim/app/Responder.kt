@@ -13,12 +13,14 @@ class FrameLog(private val max: Int = 300) {
     @Volatile var rx = 0; @Volatile var tx = 0; @Volatile var crcErrors = 0
     @Volatile var blocked = 0; @Volatile var unknown = 0; @Volatile var unsupported = 0
     @Volatile var lastRxMs = 0L
+    private val counts = HashMap<Int, Int>()
+    @Synchronized fun count(id: Int) = counts[id] ?: 0
 
     @Synchronized fun add(e: LogEntry) {
         items.addLast(e); while (items.size > max) items.removeFirst()
         when (e.dir) {
             "RX" -> {
-                rx++; lastRxMs = e.ts
+                rx++; lastRxMs = e.ts; counts[e.cmdId] = (counts[e.cmdId] ?: 0) + 1
                 if (e.valid == false) crcErrors++
                 val q = times.getOrPut(e.cmdId) { ArrayDeque() }
                 q.addLast(e.ts); while (q.size > 30) q.removeFirst()
@@ -39,7 +41,7 @@ class FrameLog(private val max: Int = 300) {
         return if (span > 0) (q.size - 1) / span else 0.0
     }
 
-    @Synchronized fun clear() { items.clear(); times.clear(); rx = 0; tx = 0; crcErrors = 0; blocked = 0; unknown = 0; unsupported = 0 }
+    @Synchronized fun clear() { items.clear(); times.clear(); counts.clear(); rx = 0; tx = 0; crcErrors = 0; blocked = 0; unknown = 0; unsupported = 0 }
 }
 
 /** Répondeur VESC indépendant du transport : octets reçus -> trames à renvoyer. */
