@@ -5,3 +5,7 @@ build/
 dist/
 *.spec
 vesc_simulator/logs/*.log
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
