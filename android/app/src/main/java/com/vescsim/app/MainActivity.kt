@@ -20,7 +20,6 @@ import java.util.concurrent.TimeUnit
 class MainActivity : Activity() {
     private lateinit var s: AppState
     private val ui = Handler(Looper.getMainLooper())
-    private var sched: ScheduledExecutorService? = null
     private lateinit var pages: List<Page>
     private val navItems = ArrayList<TextView>()
     private lateinit var container: FrameLayout
@@ -33,7 +32,7 @@ class MainActivity : Activity() {
         super.onCreate(b)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         window.statusBarColor = C.BG; window.navigationBarColor = C.PANEL
-        s = AppState(this)
+        s = AppState.get(this)
         pages = listOf(DashboardPage(s), ControlPage(s), SettingsPage(s), ScenarioPage(s), DiagPage(s))
 
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(C.BG) }
@@ -83,17 +82,10 @@ class MainActivity : Activity() {
 
     override fun onStart() {
         super.onStart()
-        sched = Executors.newSingleThreadScheduledExecutor().also {
-            var last = System.nanoTime()
-            it.scheduleAtFixedRate({
-                val now = System.nanoTime(); s.engine.step(((now - last) / 1e9).coerceAtMost(0.2)); last = now
-            }, 20, 20, TimeUnit.MILLISECONDS)
-        }
         ui.post(refresh)
     }
 
-    override fun onStop() { super.onStop(); ui.removeCallbacks(refresh); sched?.shutdownNow() }
-    override fun onDestroy() { s.shutdown(); super.onDestroy() }
+    override fun onStop() { super.onStop(); ui.removeCallbacks(refresh) }
 
     private val refresh = object : Runnable {
         override fun run() { update(); ui.postDelayed(this, 120) }
@@ -108,7 +100,7 @@ class MainActivity : Activity() {
         val st = if (!e.running) "STOPPED" else if (e.paused) "PAUSE" else "RUNNING"
         setChip(simChip, "SIM $st · ${e.t.toInt()} s", if (st == "RUNNING") C.OK else if (st == "PAUSE") C.WARN else C.BAD)
         setChip(bleChip, if (s.bleOn) (if (s.ble?.isConnected == true) "BLE ●" else "BLE ◌") else "BLE ○", if (s.bleOn) C.CYAN else C.MUTED)
-        for (p in pages) p.update(t)
+        for (p in pages) if (p.visible || p is DashboardPage || p is DiagPage) p.update(t)
     }
 
     private fun setChip(c: TextView, text: String, color: Int) {

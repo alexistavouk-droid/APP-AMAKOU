@@ -106,6 +106,11 @@ class DashboardPage(s: AppState) : Page(s) {
         ctl.addW(a.chip("■ STOP", C.BAD) { s.engine.running = false; s.engine.throttle = 0.0 }, 1f, a.dp(3))
         ctl.addW(a.chip("↺ RESET", C.CYAN) { s.engine.setScenario(null); s.engine.reset(); s.engine.running = true; charts.forEach { it.clear() } }, 1f, a.dp(3))
         col.addView(ctl)
+        col.addView(a.label("PILOTAGE — maintenez une pédale et glissez vers le haut", 11f, C.MUTED, true).also { it.setPadding(0, a.dp(10), 0, a.dp(4)) })
+        val ped = a.hbox()
+        ped.addW(PedalView(a, "FREIN RÉGÉN.", C.BAD) { v -> s.engine.throttle = -v }, 1f, a.dp(4))
+        ped.addW(PedalView(a, "ACCÉLÉRER", C.OK) { v -> s.engine.running = true; s.engine.paused = false; s.engine.throttle = v }, 1f, a.dp(4))
+        col.addView(ped)
         val modes = a.hbox().also { it.setPadding(0, a.dp(6), 0, a.dp(6)) }
         for ((n, v) in listOf("Ralenti ×0,25" to 0.25, "Normal ×1" to 1.0, "Accéléré ×4" to 4.0)) {
             val ch = a.chip(n, C.VIOLET) { s.engine.timeScale = v }
@@ -245,6 +250,7 @@ class ControlPage(s: AppState) : Page(s) {
     }
 
     override fun update(t: Telemetry) {
+        if (!thr.isPressed) thr.progress = (s.engine.throttle * 100).toInt() + 100
         rows.forEach { it.update(t) }
         for ((c, on) in faultBtns) { c.alpha = if (on()) 1f else 0.5f; c.background = a.cardBg(if (on()) C.PANEL2 else C.PANEL, 20, C.BAD) }
     }
@@ -408,7 +414,19 @@ class DiagPage(s: AppState) : Page(s) {
         col.addView(e); (e.layoutParams as LinearLayout.LayoutParams).bottomMargin = a.dp(8)
 
         col.addView(stats)
-        col.addView(a.chip("Effacer le journal", C.MUTED) { s.log.clear() })
+        val lr = a.hbox()
+        lr.addW(a.chip("Effacer le journal", C.MUTED) { s.log.clear() }, 1f, a.dp(3))
+        lr.addW(a.chip("Partager le journal", C.CYAN) {
+            val f = SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
+            val txt = s.log.tail(300).joinToString("\n") { e ->
+                f.format(Date(e.ts)) + " " + e.dir + " " + e.cmdName + " len=" + e.size + " " + (if (e.valid == false) "CRC_KO " else "") + e.hex + " " + e.msg
+            }
+            try {
+                a.startActivity(android.content.Intent.createChooser(android.content.Intent(android.content.Intent.ACTION_SEND)
+                    .setType("text/plain").putExtra(android.content.Intent.EXTRA_TEXT, txt), "Partager le journal"))
+            } catch (_: Exception) { }
+        }, 1f, a.dp(3))
+        col.addView(lr)
         col.addView(logV.also { it.setPadding(a.dp(8), a.dp(8), a.dp(8), a.dp(8)); it.background = a.cardBg() })
     }
 

@@ -10,8 +10,8 @@ android {
         applicationId = "com.vescsim.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 3
+        versionName = "3.0"
     }
     buildTypes { release { isMinifyEnabled = false } }
     compileOptions {

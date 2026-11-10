@@ -32,7 +32,8 @@ fun Context.dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 fun Context.dpf(v: Float) = v * resources.displayMetrics.density
 
 fun Context.cardBg(color: Int = C.PANEL, radius: Int = 16, stroke: Int = C.STROKE): GradientDrawable =
-    GradientDrawable().apply { setColor(color); cornerRadius = dpf(radius.toFloat()); setStroke(dp(1), stroke) }
+    (if (color == C.PANEL) GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(Color.parseColor("#182230"), Color.parseColor("#0f151d")))
+    else GradientDrawable().apply { setColor(color) }).apply { cornerRadius = dpf(radius.toFloat()); setStroke(dp(1), stroke) }
 
 fun Context.label(s: String, size: Float = 13f, color: Int = C.TEXT, bold: Boolean = false, mono: Boolean = false) = TextView(this).apply {
     text = s; textSize = size; setTextColor(color)
@@ -61,6 +62,8 @@ class GaugeView(ctx: Context, private val title: String, private val unit: Strin
     private var shown = 0.0
     private val bg = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; color = C.PANEL2 }
     private val fg = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND }
+    private val glow = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND }
+    private val dot = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
     private val tick = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = C.STROKE; strokeWidth = ctx.dpf(1.5f) }
     private val tx = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER; typeface = Typeface.create("sans-serif-condensed", Typeface.BOLD) }
 
@@ -89,7 +92,13 @@ class GaugeView(ctx: Context, private val title: String, private val unit: Strin
         fg.shader = SweepGradient(cx, cy, intArrayOf(if (shown < 0) C.OK else c1, col2, col2), floatArrayOf(0f, 0.75f, 1f)).also {
             it.setLocalMatrix(Matrix().apply { postRotate(135f, cx, cy) })
         }
-        if (frac > 0.002f) c.drawArc(r, 135f, 270f * frac, false, fg)
+        if (frac > 0.002f) {
+            glow.shader = fg.shader; glow.strokeWidth = sw * 1.8f; glow.alpha = 50
+            c.drawArc(r, 135f, 270f * frac, false, glow)
+            c.drawArc(r, 135f, 270f * frac, false, fg)
+            val ta = Math.toRadians(135.0 + 270.0 * frac)
+            c.drawCircle(cx + (rad * cos(ta)).toFloat(), cy + (rad * sin(ta)).toFloat(), sw * 0.38f, dot)
+        }
         // graduations
         val n = if (big) 20 else 10
         for (i in 0..n) {
@@ -140,6 +149,7 @@ class ChartView(ctx: Context, private val title: String, private val unit: Strin
     private val grid = Paint().apply { color = C.STROKE; strokeWidth = 1f }
     private val tx = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = C.MUTED; textSize = ctx.dpf(10f) }
     private val bgp = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val fillP = Paint(Paint.ANTI_ALIAS_FLAG)
 
     fun add(vararg v: Double) {
         for (i in data.indices) { data[i].addLast(v[i].toFloat()); while (data[i].size > cap) data[i].removeFirst() }
@@ -173,6 +183,12 @@ class ChartView(ctx: Context, private val title: String, private val unit: Strin
                 if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
             }
             line.color = C.SERIES[si % C.SERIES.size]
+            if (data.size == 1) {
+                val fill = Path(path)
+                fill.lineTo(l + (r - l) * (d.size - 1) / (cap - 1), b); fill.lineTo(l, b); fill.close()
+                fillP.shader = LinearGradient(0f, tp, 0f, b, (line.color and 0x00FFFFFF) or 0x55000000, 0, Shader.TileMode.CLAMP)
+                c.drawPath(fill, fillP)
+            }
             c.drawPath(path, line)
             if (names.size > 1) { tx.color = line.color; c.drawText("● ${names[si]}", w - context.dpf(80f), context.dpf(18f) + si * context.dpf(12f), tx) }
         }
@@ -190,5 +206,43 @@ class TileView(ctx: Context, title: String, private val unit: String) : LinearLa
     fun set(s: String, color: Int = C.TEXT, forced: Boolean = false) {
         value.text = s; value.setTextColor(color)
         background = context.cardBg(C.PANEL, 16, if (forced) C.WARN else C.STROKE)
+    }
+}
+
+/** Pédale tactile : maintenir et glisser vers le haut pour doser ; relâcher = 0. */
+class PedalView(ctx: Context, private val title: String, private val color: Int, private val onValue: (Double) -> Unit) : View(ctx) {
+    private var v = 0.0
+    private val p = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val t = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER; typeface = Typeface.create("sans-serif-condensed", Typeface.BOLD) }
+
+    override fun onMeasure(w: Int, h: Int) = setMeasuredDimension(MeasureSpec.getSize(w), context.dp(120))
+
+    override fun onTouchEvent(e: android.view.MotionEvent): Boolean {
+        when (e.actionMasked) {
+            android.view.MotionEvent.ACTION_DOWN, android.view.MotionEvent.ACTION_MOVE -> {
+                parent?.requestDisallowInterceptTouchEvent(true)
+                v = (1.0 - e.y / height + 0.15).coerceIn(0.0, 1.0)
+            }
+            else -> v = 0.0
+        }
+        onValue(v); invalidate()
+        return true
+    }
+
+    override fun onDraw(c: Canvas) {
+        val w = width.toFloat(); val h = height.toFloat(); val rd = context.dpf(16f)
+        p.shader = null; p.style = Paint.Style.FILL; p.color = C.PANEL2
+        c.drawRoundRect(RectF(0f, 0f, w, h), rd, rd, p)
+        if (v > 0) {
+            val top = h * (1 - v.toFloat())
+            p.shader = LinearGradient(0f, top, 0f, h, color, (color and 0x00FFFFFF) or 0x33000000, Shader.TileMode.CLAMP)
+            c.save(); c.clipRect(0f, top, w, h); c.drawRoundRect(RectF(0f, 0f, w, h), rd, rd, p); c.restore()
+        }
+        p.shader = null; p.style = Paint.Style.STROKE; p.strokeWidth = context.dpf(1.5f); p.color = color
+        c.drawRoundRect(RectF(1f, 1f, w - 1f, h - 1f), rd, rd, p)
+        t.color = Color.WHITE; t.textSize = h * 0.2f
+        c.drawText(title, w / 2, h * 0.45f, t)
+        t.color = if (v > 0) Color.WHITE else C.MUTED; t.textSize = h * 0.16f
+        c.drawText(if (v > 0) "%.0f %%".format(v * 100) else "maintenir", w / 2, h * 0.72f, t)
     }
 }

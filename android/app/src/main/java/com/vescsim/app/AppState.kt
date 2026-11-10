@@ -2,23 +2,37 @@ package com.vescsim.app
 
 import android.Manifest
 import android.app.Activity
+import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
 import org.json.JSONObject
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 /** État partagé : moteur, journal, BLE, configuration persistante. */
-class AppState(val act: Activity) {
+class AppState private constructor(private val ctx: Context) {
+    lateinit var act: Activity
     val engine = Engine()
     val log = FrameLog()
     val responder = Responder(engine, log)
     var ble: BleServer? = null
     @Volatile var bleState = "Arrêté"
     var bleName = "VESC SIM"
-    private val prefs = act.getSharedPreferences("vescsim", Activity.MODE_PRIVATE)
+    private val prefs = ctx.getSharedPreferences("vescsim", Activity.MODE_PRIVATE)
 
     init {
         try { prefs.getString("last", null)?.let { applyJson(JSONObject(it)) } } catch (_: Exception) { }
         engine.running = true
+        var last = System.nanoTime()
+        Executors.newSingleThreadScheduledExecutor().scheduleAtFixedRate({
+            try { val now = System.nanoTime(); engine.step(((now - last) / 1e9).coerceAtMost(0.2)); last = now } catch (_: Throwable) { }
+        }, 20, 20, TimeUnit.MILLISECONDS)
+    }
+
+    companion object {
+        @Volatile private var inst: AppState? = null
+        fun get(a: Activity): AppState { val s = inst ?: AppState(a.applicationContext).also { inst = it }; s.act = a; return s }
+        fun peek(): AppState? = inst
     }
 
     // ---- configuration <-> JSON
@@ -60,20 +74,25 @@ class AppState(val act: Activity) {
             act.checkSelfPermission(Manifest.permission.BLUETOOTH_ADVERTISE) == PackageManager.PERMISSION_GRANTED)
 
     fun requestPerms() {
-        if (Build.VERSION.SDK_INT >= 31 && !hasBlePerms())
-            act.requestPermissions(arrayOf(Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.BLUETOOTH_ADVERTISE), 1)
+        val need = ArrayList<String>()
+        if (Build.VERSION.SDK_INT >= 31 && !hasBlePerms()) { need += Manifest.permission.BLUETOOTH_CONNECT; need += Manifest.permission.BLUETOOTH_ADVERTISE }
+        if (Build.VERSION.SDK_INT >= 33 && act.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
+            need += Manifest.permission.POST_NOTIFICATIONS
+        if (need.isNotEmpty()) act.requestPermissions(need.toTypedArray(), 1)
     }
 
     fun toggleBle() {
         val b = ble
-        if (b != null && (b.isAdvertising || b.isConnected)) { b.stop(); return }
+        if (b != null && (b.isAdvertising || b.isConnected)) { stopBle(); return }
         if (!hasBlePerms()) { requestPerms(); bleState = "Autorisations Bluetooth requises — réessayez"; return }
-        val srv = BleServer(act, responder) { st -> bleState = st }
+        val srv = BleServer(ctx, responder) { st -> bleState = st }
         val err = srv.start(bleName)
         if (err != null) { bleState = err; return }
         ble = srv
+        SimService.start(ctx)
     }
 
+    fun stopBle() { ble?.stop(); SimService.stop(ctx) }
+
     val bleOn get() = ble?.let { it.isAdvertising || it.isConnected } == true
-    fun shutdown() { ble?.stop() }
 }
